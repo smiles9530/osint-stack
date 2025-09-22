@@ -50,7 +50,7 @@ const Login = () => {
   const fillDemoCredentials = () => {
     setFormData({
       username: 'admin',
-      password: 'admin123'
+      password: ''
     });
   };
 
@@ -82,7 +82,7 @@ const Login = () => {
               </h3>
               <div className="mt-2 text-sm text-blue-700">
                 <p>Username: <code className="bg-blue-100 px-1 rounded">admin</code></p>
-                <p>Password: <code className="bg-blue-100 px-1 rounded">admin123</code></p>
+                <p>Password: <code className="bg-blue-100 px-1 rounded">Your configured password</code></p>
               </div>
               <div className="mt-3">
                 <button

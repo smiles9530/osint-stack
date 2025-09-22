@@ -17,7 +17,7 @@ done
 echo "MinIO is ready!"
 
 # Set MinIO client alias
-mc alias set osint http://localhost:9000 minioadmin minioadmin123
+mc alias set osint http://localhost:9000 minioadmin ${MINIO_ROOT_PASSWORD:-minioadmin}
 
 # Create buckets if they don't exist
 echo "Creating buckets..."

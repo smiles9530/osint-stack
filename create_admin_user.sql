@@ -1,11 +1,11 @@
 -- Create admin user for OSINT Stack
--- This creates a user with username 'admin' and password 'admin123'
+-- This creates a user with username 'admin' and a secure password
 
 INSERT INTO users (username, email, hashed_password, is_superuser, is_active, created_at, updated_at)
 VALUES (
     'admin',                                    -- username
     'admin@example.com',                       -- email
-    '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj4J/8.8.8.8',  -- hashed password (password: 'admin123')
+    '$2b$12$placeholder_hash_replace_with_secure_password_hash',  -- Replace with secure password hash
     true,                                      -- is_superuser
     true,                                      -- is_active
     NOW(),                                     -- created_at

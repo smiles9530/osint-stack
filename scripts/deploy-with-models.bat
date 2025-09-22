@@ -79,7 +79,7 @@ echo Next steps:
 echo   1. Access the frontend: http://localhost:3000
 echo   2. Access the API: http://localhost:8000
 echo   3. Access N8N: http://localhost:5678
-echo   4. Login with default credentials: admin/admin123
+echo   4. Login with your configured credentials
 echo.
 echo To check Ollama models:
 echo   curl http://localhost:11434/api/tags

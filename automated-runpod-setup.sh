@@ -91,12 +91,21 @@ log "📥 Cloning OSINT Stack repository..."
 git clone ${OSINT_REPO_URL} .
 log "✅ Repository cloned successfully"
 
-# Create secure environment file using pod environment variables
-log "🔐 Creating secure environment configuration..."
+# Generate secure credentials dynamically
+log "🔐 Generating secure credentials..."
+DB_PASSWORD=$(openssl rand -base64 32 | tr -d /=+ | cut -c1-25)
+JWT_SECRET=$(openssl rand -base64 48 | tr -d /=+ | cut -c1-32)
+TYPESENSE_KEY=$(openssl rand -base64 32 | tr -d /=+ | cut -c1-24)
+N8N_KEY=$(openssl rand -base64 48 | tr -d /=+ | cut -c1-32)
+SUPERSET_SECRET=$(openssl rand -base64 64 | tr -d /=+ | cut -c1-50)
+MINIO_PASSWORD=$(openssl rand -base64 32 | tr -d /=+ | cut -c1-20)
+
+# Create secure environment file with generated credentials
+log "⚙️  Creating secure environment configuration..."
 cat > .env << EOF
 # Database Configuration
 POSTGRES_USER=osint_admin
-POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+POSTGRES_PASSWORD=${DB_PASSWORD}
 POSTGRES_DB=osint_production
 POSTGRES_PORT=5432
 POSTGRES_HOST=db
@@ -107,7 +116,7 @@ SUPERSET_DB=superset
 API_PORT=8000
 API_HOST=0.0.0.0
 API_LOG_LEVEL=info
-SECRET_KEY=${SECRET_KEY}
+SECRET_KEY=${JWT_SECRET}
 ACCESS_TOKEN_EXPIRE_MINUTES=30
 
 # AI/ML Configuration
@@ -121,26 +130,26 @@ CUDA_VISIBLE_DEVICES=0
 PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
 
 # Search Configuration
-TYPESENSE_API_KEY=${TYPESENSE_API_KEY}
+TYPESENSE_API_KEY=${TYPESENSE_KEY}
 
 # Storage Configuration
 MINIO_ENDPOINT=minio:9000
 MINIO_ACCESS_KEY=osint_storage
-MINIO_SECRET_KEY=SecureMinIOPass2024
+MINIO_SECRET_KEY=${MINIO_PASSWORD}
 MINIO_SECURE=false
 MINIO_ROOT_USER=osint_storage
-MINIO_ROOT_PASSWORD=SecureMinIOPass2024
+MINIO_ROOT_PASSWORD=${MINIO_PASSWORD}
 
 # Workflow Configuration
 N8N_HOST=0.0.0.0
 N8N_PORT=5678
 N8N_PROTOCOL=http
-N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+N8N_ENCRYPTION_KEY=${N8N_KEY}
 
 # Analytics Configuration
-SUPERSET_SECRET_KEY=SecureSupersetKey2024
+SUPERSET_SECRET_KEY=${SUPERSET_SECRET}
 SUPERSET_LOAD_EXAMPLES=no
-SUPERSET_DATABASE_URI=postgresql+psycopg2://osint_admin:${POSTGRES_PASSWORD}@db:5432/superset
+SUPERSET_DATABASE_URI=postgresql+psycopg2://osint_admin:${DB_PASSWORD}@db:5432/superset
 
 # System Configuration
 GENERIC_TIMEZONE=UTC

@@ -21,7 +21,7 @@
               },
               {
                 "name": "password",
-                "value": "admin123"
+                "value": "secure_password_placeholder"
               }
             ]
           },

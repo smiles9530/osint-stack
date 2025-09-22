@@ -37,7 +37,7 @@ class TestAuthentication:
         """Test successful login"""
         login_data = {
             "username": "admin",
-            "password": "admin123"
+            "password": "test_password"
         }
         
         response = client.post("/auth/login", json=login_data)
@@ -62,7 +62,7 @@ class TestAuthentication:
         """Test login with invalid username format"""
         login_data = {
             "username": "admin@invalid",
-            "password": "admin123"
+            "password": "test_password"
         }
         
         response = client.post("/auth/login", json=login_data)
@@ -74,7 +74,7 @@ class TestArticleEndpoints:
         # Get auth token
         login_response = client.post("/auth/login", json={
             "username": "admin",
-            "password": "admin123"
+            "password": "test_password"
         })
         self.token = login_response.json()["access_token"]
         self.headers = {"Authorization": f"Bearer {self.token}"}
@@ -261,6 +261,6 @@ class TestValidation:
         """Helper method to get auth token"""
         login_response = client.post("/auth/login", json={
             "username": "admin",
-            "password": "admin123"
+            "password": "test_password"
         })
         return login_response.json()["access_token"]

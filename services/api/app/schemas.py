@@ -60,7 +60,7 @@ class LoginRequest(BaseModel):
         json_schema_extra = {
             "example": {
                 "username": "admin",
-                "password": "admin123"
+                "password": "your_secure_password"
             }
         }
 
@@ -77,7 +77,7 @@ class UserCreate(BaseModel):
             "example": {
                 "username": "newuser",
                 "email": "user@example.com",
-                "password": "securepassword123",
+                "password": "your_secure_password",
                 "is_superuser": False
             }
         }

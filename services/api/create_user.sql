@@ -6,7 +6,7 @@ INSERT INTO users (username, email, hashed_password, is_superuser, is_active, cr
 VALUES (
     'admin',                                    -- username
     'admin@example.com',                       -- email
-    '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj4J/8.8.8.8',  -- hashed password (password: 'admin123')
+    '$2b$12$placeholder_hash_replace_with_secure_password_hash',  -- Replace with secure password hash
     true,                                      -- is_superuser
     true,                                      -- is_active
     NOW(),                                     -- created_at
