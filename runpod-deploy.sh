@@ -33,7 +33,7 @@ cd /app/osint-stack
 cat > .env << EOF
 # Database Configuration
 POSTGRES_USER=osint
-POSTGRES_PASSWORD=change_this_super_strong_password
+POSTGRES_PASSWORD=\$(openssl rand -base64 32)
 POSTGRES_DB=osint
 POSTGRES_PORT=5432
 POSTGRES_HOST=db
@@ -42,7 +42,7 @@ POSTGRES_HOST=db
 API_PORT=8000
 API_HOST=0.0.0.0
 API_LOG_LEVEL=info
-SECRET_KEY=your-secret-key-here-change-this-in-production
+SECRET_KEY=\$(openssl rand -base64 64)
 ACCESS_TOKEN_EXPIRE_MINUTES=30
 
 # Ollama Configuration
@@ -56,26 +56,26 @@ CUDA_VISIBLE_DEVICES=0
 PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
 
 # Typesense Configuration
-TYPESENSE_API_KEY=your-typesense-api-key
+TYPESENSE_API_KEY=\$(openssl rand -base64 32)
 
 # MinIO Configuration
 MINIO_ENDPOINT=minio:9000
-MINIO_ACCESS_KEY=minioadmin
-MINIO_SECRET_KEY=minioadmin
+MINIO_ACCESS_KEY=\$(openssl rand -base64 16)
+MINIO_SECRET_KEY=\$(openssl rand -base64 32)
 MINIO_SECURE=false
-MINIO_ROOT_USER=minioadmin
-MINIO_ROOT_PASSWORD=minioadmin
+MINIO_ROOT_USER=\$(openssl rand -base64 16)
+MINIO_ROOT_PASSWORD=\$(openssl rand -base64 32)
 
 # N8N Configuration
 N8N_HOST=0.0.0.0
 N8N_PORT=5678
 N8N_PROTOCOL=http
-N8N_ENCRYPTION_KEY=replace_with_32_char_random_secret_key
+N8N_ENCRYPTION_KEY=\$(openssl rand -base64 32)
 
 # Superset Configuration
-SUPERSET_SECRET_KEY=replace_with_random_long_secret
+SUPERSET_SECRET_KEY=\$(openssl rand -base64 64)
 SUPERSET_LOAD_EXAMPLES=no
-SUPERSET_DATABASE_URI=postgresql+psycopg2://osint:change_this_super_strong_password@db:5432/superset
+SUPERSET_DATABASE_URI=postgresql+psycopg2://osint:\${POSTGRES_PASSWORD}@db:5432/superset
 
 # Timezone
 GENERIC_TIMEZONE=UTC
@@ -98,6 +98,10 @@ MIN_WORKERS=2
 MAX_WORKERS=8
 SCALE_UP_THRESHOLD=80
 SCALE_DOWN_THRESHOLD=30
+
+# CORS Configuration - Production Environment
+# Replace with your actual domain(s)
+CORS_ORIGINS=https://yourdomain.com,https://api.yourdomain.com,https://www.yourdomain.com
 EOF
 
 # Start the stack

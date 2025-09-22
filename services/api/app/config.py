@@ -26,19 +26,26 @@ class Settings(BaseSettings):
     api_log_level: str = Field("INFO", env="API_LOG_LEVEL")
     
     # Security
-    secret_key: str = Field("your-secret-key-change-in-production", env="SECRET_KEY")
+    secret_key: str = Field(..., env="SECRET_KEY", description="JWT secret key - MUST be set in production")
     access_token_expire_minutes: int = Field(30, env="ACCESS_TOKEN_EXPIRE_MINUTES")
     
-    # CORS - simplified configuration
-    cors_origins: List[str] = Field(default=["*"])
+    # CORS - restrictive configuration for security
+    cors_origins: List[str] = Field(default=["http://localhost:3000", "http://localhost:8080"], env="CORS_ORIGINS")
+    
+    @field_validator('cors_origins', mode='before')
+    @classmethod
+    def parse_cors_origins(cls, v):
+        if isinstance(v, str):
+            return [origin.strip() for origin in v.split(',') if origin.strip()]
+        return v
 
     # Redis Configuration
     redis_url: str = Field("redis://localhost:6379/0", env="REDIS_URL")
 
     # MinIO Configuration
     minio_endpoint: str = Field("localhost:9000", env="MINIO_ENDPOINT")
-    minio_access_key: str = Field("minioadmin", env="MINIO_ACCESS_KEY")
-    minio_secret_key: str = Field("minioadmin", env="MINIO_SECRET_KEY")
+    minio_access_key: str = Field(..., env="MINIO_ACCESS_KEY", description="MinIO access key - MUST be set")
+    minio_secret_key: str = Field(..., env="MINIO_SECRET_KEY", description="MinIO secret key - MUST be set")
     minio_secure: bool = Field(False, env="MINIO_SECURE")
 
     # Performance Configuration

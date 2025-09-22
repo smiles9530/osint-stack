@@ -41,9 +41,24 @@ def create_user_direct():
         print("Error: Valid email is required")
         return False
     
-    password = getpass.getpass("Enter password: ")
-    if len(password) < 6:
-        print("Error: Password must be at least 6 characters long")
+    password = getpass.getpass("Enter password (min 12 chars, must include uppercase, lowercase, number, special char): ")
+    if len(password) < 12:
+        print("Error: Password must be at least 12 characters long")
+        return False
+    
+    # Validate password strength
+    import re
+    if not re.search(r'[A-Z]', password):
+        print("Error: Password must contain at least one uppercase letter")
+        return False
+    if not re.search(r'[a-z]', password):
+        print("Error: Password must contain at least one lowercase letter")
+        return False
+    if not re.search(r'[0-9]', password):
+        print("Error: Password must contain at least one digit")
+        return False
+    if not re.search(r'[!@#$%^&*()_+\-=\[\]{};\':"\\|,.<>\?]', password):
+        print("Error: Password must contain at least one special character")
         return False
     
     confirm_password = getpass.getpass("Confirm password: ")
@@ -81,9 +96,9 @@ def create_user_direct():
         try:
             hashed_password = hash_password(password)
         except ImportError:
-            print("Warning: bcrypt not available, using simple hash (not recommended for production)")
-            # Fallback to simple hash (NOT SECURE for production)
-            hashed_password = hashlib.sha256(password.encode()).hexdigest()
+            print("Error: bcrypt is required for secure password hashing")
+            print("Install bcrypt: pip install bcrypt")
+            return False
         
         # Insert user
         cur.execute("""

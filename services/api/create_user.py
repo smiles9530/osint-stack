@@ -46,9 +46,24 @@ async def create_user():
                 print(f"Error: Email '{email}' is already in use")
                 return False
     
-    password = getpass.getpass("Enter password: ")
-    if len(password) < 6:
-        print("Error: Password must be at least 6 characters long")
+    password = getpass.getpass("Enter password (min 12 chars, must include uppercase, lowercase, number, special char): ")
+    if len(password) < 12:
+        print("Error: Password must be at least 12 characters long")
+        return False
+    
+    # Validate password strength
+    import re
+    if not re.search(r'[A-Z]', password):
+        print("Error: Password must contain at least one uppercase letter")
+        return False
+    if not re.search(r'[a-z]', password):
+        print("Error: Password must contain at least one lowercase letter")
+        return False
+    if not re.search(r'[0-9]', password):
+        print("Error: Password must contain at least one digit")
+        return False
+    if not re.search(r'[!@#$%^&*()_+\-=\[\]{};\':"\\|,.<>\?]', password):
+        print("Error: Password must contain at least one special character")
         return False
     
     confirm_password = getpass.getpass("Confirm password: ")
