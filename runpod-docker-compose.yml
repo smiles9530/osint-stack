@@ -1,0 +1,219 @@
+version: '3.8'
+
+services:
+  db:
+    build:
+      context: ./db
+    container_name: osint-db
+    command: >
+      postgres -c shared_preload_libraries=timescaledb
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL","pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5432:5432"
+    networks:
+      - osint-net
+
+  typesense:
+    image: typesense/typesense:0.25.2
+    container_name: osint-typesense
+    environment:
+      TYPESENSE_DATA_DIR: /data
+      TYPESENSE_API_KEY: ${TYPESENSE_API_KEY}
+      TYPESENSE_ENABLE_CORS: "true"
+    volumes:
+      - typesense_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f typesense-server || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    ports:
+      - "8108:8108"
+    networks:
+      - osint-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: osint-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    ports:
+      - "6379:6379"
+    networks:
+      - osint-net
+
+  minio:
+    image: minio/minio:latest
+    container_name: osint-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    networks:
+      - osint-net
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: osint-ollama
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    volumes:
+      - ollama_data:/root/.ollama
+      - ./ollama-gpu-config.json:/etc/ollama/config.json
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    ports:
+      - "11434:11434"
+    networks:
+      - osint-net
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  api:
+    build:
+      context: ./services/api
+      dockerfile: Dockerfile
+    container_name: osint-api
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+    volumes:
+      - ./models:/app/models
+      - ./prompts:/app/prompts
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    ports:
+      - "8000:8000"
+    networks:
+      - osint-net
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  frontend:
+    build:
+      context: ./services/frontend
+      dockerfile: Dockerfile
+    container_name: osint-frontend
+    ports:
+      - "3000:3000"
+    networks:
+      - osint-net
+
+  n8n:
+    image: osint-stack-n8n
+    container_name: osint-n8n
+    environment:
+      - N8N_HOST=${N8N_HOST}
+      - N8N_PORT=${N8N_PORT}
+      - N8N_PROTOCOL=${N8N_PROTOCOL}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=db
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=n8n
+      - DB_POSTGRESDB_USER=${POSTGRES_USER}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "5678:5678"
+    networks:
+      - osint-net
+
+  superset:
+    image: apache/superset:latest
+    container_name: osint-superset
+    environment:
+      - SUPERSET_SECRET_KEY=${SUPERSET_SECRET_KEY}
+      - SUPERSET_LOAD_EXAMPLES=${SUPERSET_LOAD_EXAMPLES}
+      - SUPERSET_DATABASE_URI=${SUPERSET_DATABASE_URI}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8088:8088"
+    networks:
+      - osint-net
+
+  nginx:
+    image: nginx:alpine
+    container_name: osint-nginx
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/api-load-balancer.conf:/etc/nginx/conf.d/api-load-balancer.conf
+    depends_on:
+      - api
+      - frontend
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      - osint-net
+
+volumes:
+  postgres_data:
+  typesense_data:
+  redis_data:
+  minio_data:
+  ollama_data:
+
+networks:
+  osint-net:
+    driver: bridge

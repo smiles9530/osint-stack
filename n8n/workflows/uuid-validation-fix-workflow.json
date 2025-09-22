@@ -1,0 +1,312 @@
+{
+  "name": "UUID Validation Fix Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "uuid-fix",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "uuid-fix-webhook"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "validate-uuid",
+              "name": "validate_uuid",
+              "value": "={{ $json.id ? ($json.id.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i) ? $json.id : 't3_' + $json.id.replace(/^t3_/, '')) : null }}",
+              "type": "string"
+            },
+            {
+              "id": "is-reddit-id",
+              "name": "is_reddit_id",
+              "value": "={{ $json.id ? $json.id.match(/^t[123]_[a-zA-Z0-9]+$/) : false }}",
+              "type": "boolean"
+            },
+            {
+              "id": "original-id",
+              "name": "original_id",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "processed-data",
+              "name": "processed_data",
+              "value": "={{ { ...$json, id: $json.id ? ($json.id.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i) ? $json.id : 't3_' + $json.id.replace(/^t3_/, '')) : null } }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "uuid-validation",
+      "name": "UUID Validation",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-reddit-condition",
+              "leftValue": "={{ $json.is_reddit_id }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "reddit-id-filter",
+      "name": "Reddit ID Filter",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "generate-uuid",
+              "name": "generated_uuid",
+              "value": "={{ $json.original_id ? 't3_' + $json.original_id.replace(/^t3_/, '') : null }}",
+              "type": "string"
+            },
+            {
+              "id": "reddit-mapping",
+              "name": "reddit_mapping",
+              "value": "={{ { original_reddit_id: $json.original_id, reddit_type: 'post', generated_uuid: $json.original_id ? 't3_' + $json.original_id.replace(/^t3_/, '') : null, mapped_at: new Date().toISOString() } }}",
+              "type": "object"
+            },
+            {
+              "id": "final-data",
+              "name": "final_data",
+              "value": "={{ { ...$json.processed_data, id: $json.original_id ? 't3_' + $json.original_id.replace(/^t3_/, '') : null, metadata: { ...$json.processed_data.metadata, reddit_id_mapping: { original_reddit_id: $json.original_id, reddit_type: 'post', generated_uuid: $json.original_id ? 't3_' + $json.original_id.replace(/^t3_/, '') : null, mapped_at: new Date().toISOString() } } } }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "reddit-id-processing",
+      "name": "Reddit ID Processing",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "pass-through",
+              "name": "final_data",
+              "value": "={{ $json.processed_data }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "uuid-pass-through",
+      "name": "UUID Pass Through",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "articles",
+        "columns": "url, title, content, language, published_at, source_name, metadata, id",
+        "additionalFields": {},
+        "options": {}
+      },
+      "id": "postgres-insert",
+      "name": "PostgreSQL Insert",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [1120, 300],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "PostgreSQL OSINT Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "success-response",
+              "name": "success",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "message",
+              "name": "message",
+              "value": "Article processed successfully with UUID validation",
+              "type": "string"
+            },
+            {
+              "id": "article-id",
+              "name": "article_id",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "reddit-mapping",
+              "name": "reddit_mapping",
+              "value": "={{ $json.metadata?.reddit_id_mapping || null }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "success-response",
+      "name": "Success Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "error-response",
+              "name": "error",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "error-message",
+              "name": "message",
+              "value": "Failed to process article with UUID validation",
+              "type": "string"
+            },
+            {
+              "id": "error-details",
+              "name": "details",
+              "value": "={{ $json.error || 'Unknown error occurred' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "error-response",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1340, 500]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "UUID Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "UUID Validation": {
+      "main": [
+        [
+          {
+            "node": "Reddit ID Filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reddit ID Filter": {
+      "main": [
+        [
+          {
+            "node": "Reddit ID Processing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "UUID Pass Through",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reddit ID Processing": {
+      "main": [
+        [
+          {
+            "node": "PostgreSQL Insert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "UUID Pass Through": {
+      "main": [
+        [
+          {
+            "node": "PostgreSQL Insert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PostgreSQL Insert": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-20T17:59:58.000Z",
+  "versionId": "1"
+}

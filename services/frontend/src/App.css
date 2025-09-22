@@ -1,0 +1,111 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
+
+/* Loading animation */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* Chart container */
+.recharts-wrapper {
+  width: 100% !important;
+}
+
+/* Custom button styles */
+.btn-primary {
+  @apply bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors;
+}
+
+.btn-secondary {
+  @apply bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 transition-colors;
+}
+
+/* Card hover effects */
+.card-hover {
+  @apply transition-shadow duration-200 hover:shadow-lg;
+}
+
+/* Status indicators */
+.status-healthy {
+  @apply text-green-600 bg-green-100;
+}
+
+.status-warning {
+  @apply text-yellow-600 bg-yellow-100;
+}
+
+.status-error {
+  @apply text-red-600 bg-red-100;
+}
+
+/* Responsive grid */
+.grid-responsive {
+  @apply grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4;
+}
+
+/* Custom tooltip */
+.custom-tooltip {
+  @apply bg-white border border-gray-200 rounded-lg shadow-lg p-3;
+}
+
+/* Loading skeleton */
+.skeleton {
+  @apply animate-pulse bg-gray-200 rounded;
+}
+
+/* Chart legend */
+.recharts-legend-wrapper {
+  @apply text-sm;
+}
+
+/* Responsive text */
+.text-responsive {
+  @apply text-sm sm:text-base lg:text-lg;
+}
+
+/* Custom focus styles */
+.focus-ring {
+  @apply focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2;
+}

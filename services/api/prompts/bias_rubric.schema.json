@@ -1,0 +1,18 @@
+{
+  "type": "object",
+  "properties": {
+    "subjectivity": { "type": "integer", "minimum": 0, "maximum": 100 },
+    "sensationalism": { "type": "integer", "minimum": 0, "maximum": 100 },
+    "loaded_language": { "type": "integer", "minimum": 0, "maximum": 100 },
+    "bias_lr": { "type": "integer", "minimum": 0, "maximum": 100 },
+    "stance": { "type": "string", "enum": ["pro", "neutral", "anti", "unclear"] },
+    "evidence_density": { "type": "integer", "minimum": 0, "maximum": 100 },
+    "agenda_signals": { "type": "array", "items": { "type": "string" } },
+    "risk_flags": { "type": "array", "items": { "type": "string" } },
+    "key_quotes": { "type": "array", "items": { "type": "string" } },
+    "summary_bullets": { "type": "array", "items": { "type": "string" } },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "entities": { "type": "array", "items": { "type": "string" } }
+  },
+  "required": ["subjectivity","sensationalism","loaded_language","bias_lr","stance","evidence_density","agenda_signals","risk_flags","key_quotes","summary_bullets","tags","entities"]
+}

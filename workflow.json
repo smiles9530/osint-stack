@@ -1,0 +1,436 @@
+{
+    "nodes": [
+      {
+        "parameters": {},
+        "type": "n8n-nodes-base.manualTrigger",
+        "typeVersion": 1,
+        "position": [-288, -32],
+        "id": "9c267972-a207-41a3-86ab-0e7e670a0a57",
+        "name": "When clicking 'Execute workflow'"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://osint-api:8000/auth/login",
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "username",
+                "value": "admin"
+              },
+              {
+                "name": "password",
+                "value": "admin123"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [-64, -32],
+        "id": "bb8039b7-0d50-4192-b80f-6722882f9986",
+        "name": "HTTP Request"
+      },
+      {
+        "parameters": {
+          "url": "http://osint-api:8000/sources/intelligence",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "=Bearer {{ $json.access_token }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [160, -32],
+        "id": "7dc6e744-024a-4ed5-b08d-6d70b40622e8",
+        "name": "HTTP Request1"
+      },
+      {
+        "parameters": {
+          "fieldToSplitOut": "sources",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.splitOut",
+        "typeVersion": 1,
+        "position": [384, -32],
+        "id": "ba6fc588-4bab-442b-910e-3a2c627c0e97",
+        "name": "Split Out"
+      },
+      {
+        "parameters": {
+          "batchSize": 5,
+          "options": {}
+        },
+        "type": "n8n-nodes-base.splitInBatches",
+        "typeVersion": 3,
+        "position": [608, -32],
+        "id": "8cd0dbaf-f0ed-4320-975f-8ea3f9b35be2",
+        "name": "Loop Over Items"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://osint-api:8000/compliance/check/batch",
+          "sendBody": true,
+          "bodyContentType": "json",
+          "bodyContent": "={{ JSON.stringify({\n  urls: $('Loop Over Items').itemMatching(0).json.map(item => item.url),\n  user_agent: \"OSINT-Stack/1.0\",\n  force_refresh: false,\n  include_audit_trail: true,\n  include_legal_analysis: true,\n  include_content_analysis: true,\n  batch_size: 5,\n  max_concurrent_batches: 2,\n  enable_detailed_metrics: true\n}) }}",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "=Bearer {{ $('HTTP Request').item.json.access_token }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [800, 32],
+        "id": "812358fa-c63d-48b7-9960-4d9cfdf6c83d",
+        "name": "HTTP Request2"
+      },
+      {
+        "parameters": {
+          "fieldToSplitOut": "results",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.splitOut",
+        "typeVersion": 1,
+        "position": [960, 32],
+        "id": "e77ef6be-759a-4acd-9492-ca1d3e6ab193",
+        "name": "Split Results"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "f85cb878-6034-46b2-af46-3dcf769829ce",
+                "leftValue": "={{ $json.can_scrape }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.filter",
+        "typeVersion": 2.2,
+        "position": [1104, 32],
+        "id": "filter-compliant",
+        "name": "Filter Compliant",
+        "retryOnFail": true
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "c68fa3b8-1619-4250-ab95-49b0a5515432",
+                "name": "url",
+                "value": "={{ $json.url }}",
+                "type": "string"
+              },
+              {
+                "id": "compliance_status",
+                "name": "compliance_status",
+                "value": "={{ $json.status }}",
+                "type": "string"
+              },
+              {
+                "id": "risk_score",
+                "name": "risk_score",
+                "value": "={{ $json.risk_score }}",
+                "type": "number"
+              },
+              {
+                "id": "risk_level",
+                "name": "risk_level",
+                "value": "={{ $json.risk_level }}",
+                "type": "string"
+              },
+              {
+                "id": "reason",
+                "name": "reason",
+                "value": "={{ $json.reason }}",
+                "type": "string"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [1248, 32],
+        "id": "7c586247-a01f-43ef-942f-9719ca9be020",
+        "name": "Edit Fields"
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "uuid-validation",
+                "name": "id",
+                "value": "={{ $json.id ? ($json.id.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i) ? $json.id : ($json.id.match(/^t[123]_[a-zA-Z0-9]+$/) ? 'reddit-' + $json.id : 'generated-' + $json.id)) : null }}",
+                "type": "string"
+              },
+              {
+                "id": "reddit-mapping",
+                "name": "reddit_mapping",
+                "value": "={{ $json.id && $json.id.match(/^t[123]_[a-zA-Z0-9]+$/) ? { original_reddit_id: $json.id, reddit_type: $json.id.startsWith('t3_') ? 'post' : ($json.id.startsWith('t1_') ? 'comment' : 'user'), mapped_at: new Date().toISOString() } : null }}",
+                "type": "object"
+              },
+              {
+                "id": "metadata",
+                "name": "metadata",
+                "value": "={{ { ...($json.metadata || {}), reddit_id_mapping: $json.id && $json.id.match(/^t[123]_[a-zA-Z0-9]+$/) ? { original_reddit_id: $json.id, reddit_type: $json.id.startsWith('t3_') ? 'post' : ($json.id.startsWith('t1_') ? 'comment' : 'user'), mapped_at: new Date().toISOString() } : null } }}",
+                "type": "object"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [1400, 32],
+        "id": "uuid-validation-node",
+        "name": "UUID Validation"
+      },
+      {
+        "parameters": {
+          "operation": "upsert",
+          "schema": "public",
+          "table": "articles",
+          "columns": "id, url, title, content, language, published_at, source_name, metadata",
+          "additionalFields": {},
+          "options": {
+            "upsert": true,
+            "upsertColumns": ["url"]
+          }
+        },
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [1552, 32],
+        "id": "postgres-insert",
+        "name": "Insert Article",
+        "credentials": {
+          "postgres": {
+            "id": "postgres-credentials",
+            "name": "PostgreSQL OSINT Database"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "summary",
+                "name": "summary",
+                "value": "=Processed {{ $('Loop Over Items').itemMatching(0).json.length }} sources, {{ $('Filter Compliant').all().length }} passed compliance check",
+                "type": "string"
+              },
+              {
+                "id": "compliant_sources",
+                "name": "compliant_sources",
+                "value": "={{ $('Edit Fields').all() }}",
+                "type": "object"
+              },
+              {
+                "id": "total_processed",
+                "name": "total_processed",
+                "value": "={{ $('HTTP Request2').item.json.total_processed }}",
+                "type": "number"
+              },
+              {
+                "id": "successful_checks",
+                "name": "successful_checks",
+                "value": "={{ $('HTTP Request2').item.json.successful_checks }}",
+                "type": "number"
+              },
+              {
+                "id": "failed_checks",
+                "name": "failed_checks",
+                "value": "={{ $('HTTP Request2').item.json.failed_checks }}",
+                "type": "number"
+              },
+              {
+                "id": "processing_time_ms",
+                "name": "processing_time_ms",
+                "value": "={{ $('HTTP Request2').item.json.processing_time_ms }}",
+                "type": "number"
+              },
+              {
+                "id": "timestamp",
+                "name": "timestamp",
+                "value": "={{ new Date().toISOString() }}",
+                "type": "string"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [1392, -32],
+        "id": "final-output",
+        "name": "Final Output"
+      }
+    ],
+    "connections": {
+      "When clicking 'Execute workflow'": {
+        "main": [
+          [
+            {
+              "node": "HTTP Request",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "HTTP Request": {
+        "main": [
+          [
+            {
+              "node": "HTTP Request1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "HTTP Request1": {
+        "main": [
+          [
+            {
+              "node": "Split Out",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Split Out": {
+        "main": [
+          [
+            {
+              "node": "Loop Over Items",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Loop Over Items": {
+        "main": [
+          [
+            {
+              "node": "HTTP Request2",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Final Output",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "HTTP Request2": {
+        "main": [
+          [
+            {
+              "node": "Split Results",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Split Results": {
+        "main": [
+          [
+            {
+              "node": "Filter Compliant",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Filter Compliant": {
+        "main": [
+          [
+            {
+              "node": "Edit Fields",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Edit Fields": {
+        "main": [
+          [
+            {
+              "node": "UUID Validation",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "UUID Validation": {
+        "main": [
+          [
+            {
+              "node": "Insert Article",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Insert Article": {
+        "main": [
+          [
+            {
+              "node": "Loop Over Items",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    }
+  }

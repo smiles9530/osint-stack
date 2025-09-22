@@ -1,0 +1,337 @@
+You are an expert full-stack engineer. Build a **Django REST API** (Django 5 + Django REST Framework) and a **React 18** SPA that implements a role-based workflow for compliance analysis of “treatments.” Follow best practices: typed Python (mypy-friendly), PEP8/black, DRF viewsets/routers, JWT auth, RBAC, optimistic UI, and comprehensive tests.
+
+## Roles
+
+* **Supervisor**: creates Treatments, assigns to a CI.
+* **Compliance Investigator (CI)**: gathers/edits initial data, evaluates, submits for approval, generates decision, closes analysis.
+* **Validator**: approves/rejects with remarks.
+
+## Non-Functional
+
+* Security: JWT, role-scoped permissions, object-level checks, server-side validation.
+* Auditability: immutable audit log of state changes & comments (user, timestamp, diff).
+* Integrity: workflow state machine—**no illegal transitions**.
+* DX: Dockerized dev, seed script with demo users and sample data.
+* i18n-ready (en), timezones UTC, ISO-8601 timestamps.
+* Accessibility: WAI-ARIA for SPA forms and buttons.
+
+---
+
+# Implementation Instructions
+
+## Data Model (Django)
+
+Create app `compliance`.
+
+**Enums**
+
+* `TreatmentStatus`: `DRAFT`, `ASSIGNED`, `IN_PROGRESS`, `SUBMITTED_FOR_APPROVAL`, `APPROVED`, `REJECTED`, `DECISION_GENERATED`, `SIGNED`, `CLOSED`.
+* `Role`: `SUPERVISOR`, `CI`, `VALIDATOR`.
+
+**Models**
+
+* `User`: extend `AbstractUser` with `role: Role`.
+* `Treatment`:
+
+  * `id: UUID`
+  * `title: str`
+  * `description: Text`
+  * `purpose: Text | null`
+  * `legal_basis: Text | null`
+  * `data_categories: JSON | null` (array of strings/objects)
+  * `data_subjects: JSON | null`
+  * `status: TreatmentStatus = DRAFT`
+  * `created_by: FK(User, on_delete=PROTECT)`
+  * `assigned_to: FK(User, null=True, limit_to role=CI)`
+  * `current_version: int = 1`
+  * `created_at, updated_at`
+* `EvaluationRevision` (versioned snapshots of the “initial data” & changes):
+
+  * `id: UUID`
+  * `treatment: FK(Treatment)`
+  * `version: int`
+  * `payload: JSON`  // purpose, legal\_basis, data fields, etc.
+  * `created_by: FK(User)`
+  * `created_at`
+* `ApprovalRequest`:
+
+  * `id: UUID`
+  * `treatment: FK(Treatment, unique while pending)`
+  * `submitted_by: FK(User)`
+  * `submitted_version: int`
+  * `status: enum(PENDING, APPROVED, REJECTED) = PENDING`
+  * `reviewed_by: FK(User, null=True, role=VALIDATOR)`
+  * `remarks: Text | null`
+  * `created_at`, `reviewed_at`
+* `DecisionDocument`:
+
+  * `id: UUID`
+  * `treatment: OneToOne(Treatment)`
+  * `generated_by: FK(User)`
+  * `file: FileField` // generated PDF
+  * `generated_at`
+  * `signed_at: datetime | null`
+  * `signature_metadata: JSON | null` // e.g., signer name, method, hash
+* `AuditLog`:
+
+  * `id: UUID`
+  * `treatment: FK(Treatment, null=True)`
+  * `actor: FK(User)`
+  * `action: str` // e.g., CREATED, ASSIGNED, UPDATED\_EVAL, SUBMITTED, APPROVED, REJECTED, DECISION\_GENERATED, SIGNED, CLOSED
+  * `from_status: TreatmentStatus | null`
+  * `to_status: TreatmentStatus | null`
+  * `diff: JSON | null` // field-level changes
+  * `message: Text | null`
+  * `created_at`
+
+## Workflow & Transitions
+
+1. **Supervisor creates Treatment** → `DRAFT`.
+2. **Supervisor assigns to CI** → set `assigned_to`, status → `ASSIGNED`.
+3. **CI gathers/edits initial data** → create/update `EvaluationRevision` (increment version). Status → `IN_PROGRESS`.
+4. **CI refines data iteratively** (add/remove/enrich). Always saved as new `EvaluationRevision`, bump `current_version`.
+5. **CI submits for approval** → create `ApprovalRequest(PENDING)` with `submitted_version=current_version`; Treatment status → `SUBMITTED_FOR_APPROVAL`.
+6. **Validators review**:
+
+   * **Approve** → `ApprovalRequest.status=APPROVED`, set `reviewed_by`, `reviewed_at`; Treatment status → `APPROVED`.
+   * **Reject** (with `remarks`) → `ApprovalRequest.status=REJECTED`; Treatment status → `REJECTED`.
+7. **If APPROVED** → CI generates **DecisionDocument** (server-side PDF from latest approved revision) and uploads/stores. Status → `DECISION_GENERATED`.
+8. **On signature recorded** (upload or e-sign webhook) → set `signed_at`, `signature_metadata`; Treatment status → `SIGNED`.
+9. **CI closes analysis** → status → `CLOSED`.
+
+Enforce legal transitions server-side; reject anything else with `409 Conflict`.
+
+## Permissions (DRF)
+
+* **Supervisor**:
+
+  * Create Treatment, assign CI, read all, cannot approve/reject.
+* **CI** (assigned):
+
+  * Read/Write assigned Treatment (while < CLOSED), create EvaluationRevisions, submit for approval, generate decision, mark signed (if they orchestrate signature), close.
+* **Validator**:
+
+  * List Treatments in `SUBMITTED_FOR_APPROVAL`, approve/reject with remarks.
+* **All roles**: read `AuditLog` for Treatments they can see.
+
+Use custom DRF permissions + object-level checks (e.g., `treatment.assigned_to == request.user` for CI ops).
+
+## API (DRF)
+
+Base path `/api`.
+
+* `POST /auth/login` → JWT.
+* `GET /users/me`
+* `GET /treatments` (filter: `status`, `assigned_to`, search `title`)
+* `POST /treatments` (Supervisor)
+* `POST /treatments/{id}/assign` body `{assigned_to}` (Supervisor)
+* `GET /treatments/{id}`
+* `PATCH /treatments/{id}` (field edits restricted by role/status)
+* `GET /treatments/{id}/revisions`
+* `POST /treatments/{id}/revisions` (CI) body `{payload}`
+* `POST /treatments/{id}/submit-for-approval` (CI)
+* `GET /approvals?status=PENDING`
+* `POST /approvals/{approval_id}/approve` (Validator)
+* `POST /approvals/{approval_id}/reject` (Validator) body `{remarks}`
+* `POST /treatments/{id}/generate-decision` (CI) → creates PDF, returns file metadata
+* `POST /treatments/{id}/mark-signed` (CI) body `{signature_metadata}`
+* `POST /treatments/{id}/close` (CI)
+* `GET /treatments/{id}/audit`
+
+Responses: JSON, include `status`, `current_version`, and helpful error messages. Use 400/403/404/409 appropriately.
+
+## PDF Generation
+
+* Use `weasyprint`/`xhtml2pdf` to render a templated decision from the **approved revision** data.
+* Store under `MEDIA_ROOT/decisions/{treatment_id}.pdf`.
+* Hash file (SHA256) and record in `signature_metadata` if available.
+
+## Frontend (React 18 + Router + Query + Form)
+
+* Auth pages (login).
+* **Dashboard** with tabs:
+
+  * Supervisor: My Treatments, Create, Assign.
+  * CI: Assigned to Me (kanban by status: IN\_PROGRESS, SUBMITTED, APPROVED, DECISION\_GENERATED, SIGNED).
+  * Validator: Pending Approvals queue.
+* **Treatment Detail**:
+
+  * Header: status pill, assignee, actions (contextual by role).
+  * **Evaluation Editor** (CI): JSON-driven form for purpose, legal basis, data categories/subjects; supports add/remove/enrich with change preview (diff from previous).
+  * **Revisions** timeline with diff viewer.
+  * **Approval Panel**:
+
+    * CI: “Submit for approval” (disabled unless changes saved).
+    * Validator: Approve/Reject with required remarks on reject.
+  * **Decision Panel** (post-approval):
+
+    * Generate Decision (shows PDF preview)
+    * Upload Signature / Mark Signed
+    * Close Analysis (enabled only when signed)
+* **Audit Log** stream: human-readable entries.
+
+Form behavior: client validation + server errors surfaced inline. Use optimistic updates where safe; otherwise refetch on success.
+
+## Validation Rules (server)
+
+* Cannot submit for approval if there is no `EvaluationRevision`.
+* `submit-for-approval` must reference the latest version automatically.
+* Approve/Reject only if `status=SUBMITTED_FOR_APPROVAL`.
+* Generate decision only if `status=APPROVED`.
+* Mark signed only if `status=DECISION_GENERATED`.
+* Close only if `status=SIGNED`.
+* Reject requires non-empty `remarks` (≥ 10 chars).
+* Assignment requires role=CI on target user.
+
+## Notifications (optional nice-to-have)
+
+* On status changes, create in-app notifications (future email hooks).
+
+---
+
+# Acceptance Criteria (Given-When-Then)
+
+1. Create & Assign
+
+* **Given** a Supervisor is authenticated
+* **When** they create a Treatment and assign a CI
+* **Then** Treatment is `ASSIGNED`, `assigned_to` set, audit logs written.
+
+2. CI Evaluation Loop
+
+* **Given** a CI is assigned
+* **When** they add/edit data and save twice
+* **Then** two `EvaluationRevision`s exist, `current_version` increments, status `IN_PROGRESS`.
+
+3. Submit for Approval
+
+* **Given** at least one revision exists
+* **When** CI submits for approval
+* **Then** `ApprovalRequest(PENDING)` is created and Treatment is `SUBMITTED_FOR_APPROVAL`.
+
+4. Approve Path
+
+* **Given** a Validator views a pending request
+* **When** they approve
+* **Then** Treatment → `APPROVED`, approval recorded, audit logged.
+
+5. Reject Path
+
+* **Given** a Validator views a pending request
+* **When** they reject with remarks
+* **Then** Treatment → `REJECTED`, remarks saved, audit logged; CI can resume editing (status flips to `IN_PROGRESS` on next edit).
+
+6. Decision Generation
+
+* **Given** Treatment is `APPROVED`
+* **When** CI generates decision
+* **Then** PDF file saved and Treatment → `DECISION_GENERATED`.
+
+7. Signature & Close
+
+* **Given** a decision exists
+* **When** CI marks it signed and then closes
+* **Then** statuses transition `SIGNED` → `CLOSED`, uneditable thereafter (except read & audit).
+
+8. Illegal Transitions
+
+* **Given** Treatment is `DRAFT`
+* **When** CI calls `generate-decision`
+* **Then** API responds `409 Conflict` with message “Invalid transition from DRAFT to DECISION\_GENERATED”.
+
+9. Permissions
+
+* **Given** a different CI tries to edit a Treatment not assigned to them
+* **Then** API returns `403 Forbidden`.
+
+10. Audit Trail
+
+* **Given** any transition occurs
+* **Then** an `AuditLog` entry is created with actor, action, from→to status, and diff where applicable.
+
+---
+
+# Test Plan
+
+## Backend (pytest + DRF)
+
+* Factories for User (roles), Treatment, Revisions.
+* Tests per endpoint:
+
+  * Creation, assignment, revisions, submit, approve, reject, decision, sign, close.
+  * Permission tests for each role.
+  * Transition tests for `409 Conflict`.
+  * Audit log creation assertions.
+* Schema tests: OpenAPI generated and valid.
+
+## Frontend (Vitest + React Testing Library)
+
+* Auth flow.
+* Treatment list filters & role views.
+* Treatment detail: renders by role, enables/disables actions based on status.
+* Revision editor: add/remove/enrich data; diff render.
+* Approval modal: requires remarks on reject.
+* Decision generation: displays preview link after success.
+
+## E2E (Playwright)
+
+* Seed users & demo Treatment.
+* Full happy-path: create → assign → CI edits → submit → approve → generate → sign → close.
+* Reject path roundtrip.
+
+---
+
+# Delivery Checklist
+
+**Repo Structure**
+
+```
+/backend
+  manage.py
+  requirements.txt
+  config/settings.py
+  compliance/ (models, serializers, viewsets, permissions, services/pdf.py)
+  tests/
+/frontend
+  package.json
+  src/
+    app/
+    pages/
+    components/
+    api/client.ts
+    features/treatments/
+    hooks/
+    tests/
+docker-compose.yml
+README.md
+```
+
+**Build/Run**
+
+* Backend: `python -m venv .venv && pip install -r requirements.txt && python manage.py migrate && python manage.py runserver`
+* Frontend: `npm i && npm run dev`
+* Docker: `docker compose up --build`
+
+**Docs**
+
+* README with role matrix, API endpoints, environment variables, and seed accounts.
+* OpenAPI schema at `/api/schema/` with Swagger UI.
+
+**Seeds**
+
+* Create demo users: `supervisor@saaS.local` (SUPERVISOR), `ci@saaS.local` (CI), `validator@saaS.local` (VALIDATOR) with password `Passw0rd!`.
+
+---
+
+## Notes on Your Steps Mapped to the Build
+
+1. Supervisor creates Treatment → `DRAFT`.
+2. Supervisor assigns CI → `ASSIGNED`.
+3. CI gathers initial data & inputs in app → `EvaluationRevision` v1, `IN_PROGRESS`.
+4. CI iterates (change/remove/enrich) → new revisions, version bump.
+5. CI submits latest version → `ApprovalRequest(PENDING)`, `SUBMITTED_FOR_APPROVAL`.
+6. Validators approve/reject w/ remarks → `APPROVED` or `REJECTED`.
+7. If approved, CI generates decision PDF, prints/exports, submits for signature → `DECISION_GENERATED`, then `SIGNED`.
+8. When signed, CI closes analysis → `CLOSED`.
+
+If you want, I can also generate starter Django models, DRF viewsets, and React scaffolding matching this spec.

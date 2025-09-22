@@ -1,0 +1,106 @@
+Great question! Here’s a tight, practical playbook to get **top performance** across the five pillars we discussed.
+
+# 1 Stability (no crashes)
+
+**Do**
+
+* Set crash-free SLOs (e.g., **≥99.9% crash-free sessions**).
+* Add global error handlers + graceful fallbacks (retry, queue, user message).
+* Kill memory leaks; enforce limits (heap, file handles, DB connections).
+* Feature flags + safe rollbacks; staged rollouts.
+
+**Measure**
+
+* Crash-free rate, app restarts, OOMs, error budgets consumed.
+
+---
+
+# 2 Responsiveness (smooth UI)
+
+**Do**
+
+* Keep the main/UI thread light; move work off-thread (workers/queues).
+* Virtualize long lists; debounce/throttle frequent events.
+* Preload/prefetch critical data on navigation; lazy-load non-critical UI.
+* Use GPU-friendly animations; avoid layout thrash (batch DOM updates).
+
+**Measure**
+
+* Input latency (**<50 ms** for taps/clicks), dropped frames, TTI/TTFB (web).
+
+---
+
+# 3 Low Latency (no lag)
+
+**Do**
+
+* Minimize round trips: **batch requests**, use **HTTP/2+**, compress payloads.
+* Cache aggressively (client, CDN, edge, server). Respect ETags.
+* Use pagination + server-side filtering; avoid N+1 queries.
+* Co-locate compute and data; keep hot paths short.
+
+**Measure**
+
+* p95/p99 API latency (e.g., **p95 < 300 ms**), query time, cache hit rate.
+
+---
+
+# 4 Speed (fast startup & operations)
+
+**Do**
+
+* Trim startup: lazy-load modules, defer non-critical work, warm caches.
+* Optimize images (modern formats, responsive sizes) & bundles (tree-shaking).
+* Avoid synchronous blocking I/O; use connection pooling.
+* Profile the hot paths and fix the top offenders first (Amdahl’s Law).
+
+**Measure**
+
+* App cold start (**<2 s mobile**, **<3 s web** on 4G), p95 action times, CPU/heap.
+
+---
+
+# 5 Scalability (handles growth)
+
+**Do**
+
+* Stateless services; **horizontal scale** behind a load balancer.
+* Read replicas, partitioning/sharding for databases; async work via queues.
+* Apply backpressure: rate limits, circuit breakers, timeouts, retries with jitter.
+* Autoscaling with sane limits; cost/perf monitoring.
+
+**Measure**
+
+* Saturation (CPU, memory, queue depth), throughput, error rate under load.
+
+---
+
+## Quick wins (often 80/20)
+
+* Turn on gzip/brotli + HTTP/2; cache static assets with long TTL.
+* Add **indexes** for slow DB queries; fix N+1; use **SELECT columns** (no `SELECT *`).
+* Image diet: webp/avif, proper sizing; lazy-load below-the-fold.
+* Introduce a **CDN**; cache API GETs at the edge when safe.
+* Batch API calls on app start; prefetch next-screen data.
+* Add **connection pooling** & tune pool sizes.
+
+---
+
+## Minimal “Performance CI/CD” loop
+
+1. **Define SLOs**: p95 API < 300 ms; crash-free ≥ 99.9%; cold start < 2 s; frame drops < 1%.
+2. **Instrument**: metrics, logs, tracing on all services + RUM on clients.
+3. **Test before prod**: unit perf budgets, **load tests** (baseline + regression gates).
+4. **Canary + rollback**: guardrails with alerts tied to SLOs.
+5. **Weekly performance review**: attack the top 5 slow endpoints/queries.
+
+---
+
+## Architecture cheatsheet
+
+* **Caching tiers**: client → CDN/edge → service cache (e.g., in-memory/Redis) → DB.
+* **Async by default**: queues for heavy/non-interactive work; idempotent handlers.
+* **Data design**: denormalize hot reads; precompute where needed; TTL invalidation rules.
+* **Resilience**: retries (exponential backoff + jitter), timeouts, circuit breakers.
+
+---

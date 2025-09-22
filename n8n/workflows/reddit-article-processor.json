@@ -1,0 +1,275 @@
+{
+  "name": "Reddit Article Processor",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "reddit-processor",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "reddit-processor-webhook"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "validate-reddit-id",
+              "name": "is_reddit_id",
+              "value": "={{ $json.id ? $json.id.match(/^t[123]_[a-zA-Z0-9]+$/) : false }}",
+              "type": "boolean"
+            },
+            {
+              "id": "original-id",
+              "name": "original_id",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "processed-id",
+              "name": "processed_id",
+              "value": "={{ $json.id ? ($json.id.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i) ? $json.id : 'reddit-' + $json.id.replace(/^t[123]_/, '')) : null }}",
+              "type": "string"
+            },
+            {
+              "id": "reddit-mapping",
+              "name": "reddit_mapping",
+              "value": "={{ $json.id && $json.id.match(/^t[123]_[a-zA-Z0-9]+$/) ? { original_reddit_id: $json.id, reddit_type: $json.id.startsWith('t3_') ? 'post' : ($json.id.startsWith('t1_') ? 'comment' : 'user'), mapped_at: new Date().toISOString() } : null }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "reddit-id-processor",
+      "name": "Reddit ID Processor",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-reddit-condition",
+              "leftValue": "={{ $json.is_reddit_id }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "reddit-filter",
+      "name": "Reddit ID Filter",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "final-data",
+              "name": "article_data",
+              "value": "={{ { ...$json, id: $json.processed_id, metadata: { ...($json.metadata || {}), reddit_id_mapping: $json.reddit_mapping } } }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "reddit-data-preparer",
+      "name": "Reddit Data Preparer",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "pass-through",
+              "name": "article_data",
+              "value": "={{ $json }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "uuid-pass-through",
+      "name": "UUID Pass Through",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://osint-api:8000/articles/ingest/fetch_extract",
+        "sendBody": true,
+        "bodyContentType": "json",
+        "bodyContent": "={{ JSON.stringify({ url: $json.article_data.url, title: $json.article_data.title, lang: $json.article_data.language || 'en', published_at: $json.article_data.published_at, source: $json.article_data.source_name || 'Unknown' }) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('HTTP Request').item.json.access_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "api-insert",
+      "name": "API Insert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "success-response",
+              "name": "success",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "message",
+              "name": "message",
+              "value": "Article processed successfully",
+              "type": "string"
+            },
+            {
+              "id": "article-id",
+              "name": "article_id",
+              "value": "={{ $json.article_id }}",
+              "type": "string"
+            },
+            {
+              "id": "original-reddit-id",
+              "name": "original_reddit_id",
+              "value": "={{ $('Reddit ID Processor').item.json.original_id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "success-response",
+      "name": "Success Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1340, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Reddit ID Processor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reddit ID Processor": {
+      "main": [
+        [
+          {
+            "node": "Reddit ID Filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reddit ID Filter": {
+      "main": [
+        [
+          {
+            "node": "Reddit Data Preparer",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "UUID Pass Through",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reddit Data Preparer": {
+      "main": [
+        [
+          {
+            "node": "API Insert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "UUID Pass Through": {
+      "main": [
+        [
+          {
+            "node": "API Insert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API Insert": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-20T18:04:10.000Z",
+  "versionId": "1"
+}

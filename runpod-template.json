@@ -1,0 +1,44 @@
+{
+  "name": "OSINT Stack - AI/ML Platform",
+  "description": "Complete OSINT stack with GPU acceleration for AI/ML operations",
+  "imageName": "runpod/pytorch:2.0.1-py3.10-cuda11.8.0-devel-ubuntu22.04",
+  "containerDiskSizeGb": 50,
+  "volumeDiskSizeGb": 100,
+  "dockerArgs": "--shm-size=16g --gpus all",
+  "env": {
+    "CUDA_VISIBLE_DEVICES": "0",
+    "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:512",
+    "NVIDIA_VISIBLE_DEVICES": "all",
+    "NVIDIA_DRIVER_CAPABILITIES": "compute,utility"
+  },
+  "startJupyter": false,
+  "startSsh": true,
+  "ports": [
+    {
+      "name": "API",
+      "port": 8000,
+      "isPublic": true
+    },
+    {
+      "name": "Frontend", 
+      "port": 3000,
+      "isPublic": true
+    },
+    {
+      "name": "N8N",
+      "port": 5678,
+      "isPublic": true
+    },
+    {
+      "name": "Superset",
+      "port": 8088,
+      "isPublic": true
+    },
+    {
+      "name": "Web Interface",
+      "port": 80,
+      "isPublic": true
+    }
+  ],
+  "templateId": "osint-stack-template"
+}

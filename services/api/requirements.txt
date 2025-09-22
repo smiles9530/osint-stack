@@ -1,0 +1,69 @@
+fastapi==0.112.0
+uvicorn[standard]==0.30.6
+psycopg2-binary==2.9.9
+# qdrant-client==1.9.1  # Removed - using PGVector instead
+typesense==0.19.0
+httpx==0.27.2
+python-dotenv==1.0.1
+pydantic==2.8.2
+pydantic-settings==2.4.0
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.6
+pytest==7.4.3
+pytest-asyncio==0.21.1
+redis==5.0.1
+asyncpg==0.29.0
+prometheus-client==0.19.0
+psutil==5.9.6
+# ML and Analytics dependencies
+scikit-learn==1.3.2
+nltk==3.8.1
+spacy==3.7.2
+pandas==2.1.4
+numpy==1.24.4
+reportlab==4.0.7
+openpyxl==3.1.2
+# Advanced ML dependencies
+gensim==4.3.2
+plotly==5.17.0
+statsmodels==0.14.0
+scipy==1.11.4
+matplotlib==3.8.2
+seaborn==0.13.0
+wordcloud==1.9.2
+textblob==0.17.1
+vaderSentiment==3.3.2
+# Web scraping and automation
+playwright==1.40.0
+aiohttp==3.9.1
+# MinIO client for object storage
+minio==7.2.5
+# Swagger/OpenAPI documentation (built into FastAPI)
+
+# Advanced ML and Reranking dependencies
+transformers>=4.21.0,<4.32.0
+torch>=1.12.0,<2.1.0
+sentence-transformers>=2.2.0,<2.3.0
+huggingface_hub>=0.16.0,<0.20.0
+# Reranking models
+# cross-encoder==0.0.7  # Not available, using sentence-transformers instead
+# Multilingual support
+langdetect==1.0.9
+# Geotagging
+geopy==2.4.1
+# Enhanced NER
+spacy-transformers>=1.0.0
+# spaCy model will be downloaded via python -m spacy download
+
+# Topic Discovery & Clustering
+bertopic>=0.15.0
+umap-learn>=0.5.0
+hdbscan>=0.8.0
+
+# Advanced Sentiment, Stance, and Bias Analysis
+# (Dependencies already included above)
+# Specific models for sentiment, stance, and toxicity analysis
+# cardiffnlp/twitter-roberta-base-sentiment-latest
+# ynie/roberta-large-snli_mnli_fever_anli_R1_R2_R3-nli  
+# unitary/unbiased-toxic-roberta

@@ -1,0 +1,807 @@
+got it — here’s a **turn-key build plan for Cursor AI** to scaffold, containerize, and wire up your n8n-driven OSINT/RAG system with bias analysis, forecasting, and a simple reinforcement loop (bandit. It includes repo structure, Docker, services, n8n workflow specs, prompts, SQL schema, and test steps so Cursor can implement everything in one go.
+
+---
+
+# Project blueprint for Cursor
+
+## 0) Outcomes & acceptance criteria
+
+**Goal:** Fully local pipeline that pulls news via RSS, renders JS pages as needed, extracts clean text, runs bias/stance/sentiment analysis, indexes content for RAG, generates daily digests + short forecasts, and continuously improves source/model/prompt selection via a lightweight bandit loop.
+
+**Done when:**
+
+* `docker compose up` brings up Postgres, Qdrant, Ollama, n8n, and two Python microservices.
+* An n8n **Ingest** workflow runs on a schedule, parses feeds, dedupes, fetches full text (HTTP or Puppeteer), analyzes bias, embeds, and upserts to Qdrant with rich metadata.
+* An n8n **RAG QA** workflow answers questions with citations from your vector store.
+* An n8n **Digest+Forecast** workflow produces a daily topic digest and calls a forecast microservice (Prophet-style) for 7-day trend hints.
+* A **bandit loop** collects feedback and updates the configuration (source weights / prompt variant) used on the next run.
+
+---
+
+## 1) Repository layout (tell Cursor to create these)
+
+```
+intel-automator/
+├─ .env.example
+├─ docker-compose.yml
+├─ README.md
+├─ .devcontainer/
+│  └─ devcontainer.json
+├─ db/
+│  ├─ schema.sql
+│  └─ seed.sql
+├─ prompts/
+│  ├─ bias_rubric.md
+│  ├─ bias_rubric.schema.json
+│  ├─ qa_system.md
+│  └─ digest_system.md
+├─ services/
+│  ├─ extractor/          # HTML → clean text (trafilatura)
+│  │  ├─ Dockerfile
+│  │  ├─ requirements.txt
+│  │  └─ main.py
+│  └─ forecast/           # simple forecast + bandit endpoints
+│     ├─ Dockerfile
+│     ├─ requirements.txt
+│     └─ main.py
+├─ workflows/             # n8n export placeholders (you’ll import & tweak)
+│  ├─ ingest.json
+│  ├─ rag_qa.json
+│  └─ digest_forecast.json
+└─ ops/
+   ├─ sample_feeds.yaml
+   └─ test_requests.http
+```
+
+---
+
+## 2) Dev containers (optional but handy)
+
+**.devcontainer/devcontainer.json**
+
+```json
+{
+  "name": "intel-automator",
+  "dockerComposeFile": ["../docker-compose.yml"],
+  "service": "n8n",
+  "workspaceFolder": "/workspace",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {},
+    "ghcr.io/devcontainers/features/python:1": { "version": "3.11" }
+  },
+  "forwardPorts": [5678, 7860, 3000, 8080, 8200, 6333],
+  "remoteUser": "node"
+}
+```
+
+---
+
+## 3) Environment & Compose
+
+**.env.example**
+
+```
+# Core
+PROJECT_NAME=intel-automator
+TZ=Africa/Casablanca
+
+# Postgres
+POSTGRES_USER=osint
+POSTGRES_PASSWORD=osintpw
+POSTGRES_DB=osintdb
+
+# n8n
+N8N_HOST=localhost
+N8N_PORT=5678
+N8N_PROTOCOL=http
+N8N_ENCRYPTION_KEY=replace-with-long-random
+GENERIC_TIMEZONE=Africa/Casablanca
+N8N_LOG_LEVEL=info
+
+# Qdrant
+QDRANT_PORT=6333
+
+# Ollama
+OLLAMA_MODELS=llama3.1:8b,qwen2.5:7b,nomic-embed-text:latest
+```
+
+**docker-compose.yml**
+
+```yaml
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ${PROJECT_NAME}-pg
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      TZ: ${TZ}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./db/seed.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: ${PROJECT_NAME}-qdrant
+    volumes:
+      - qdrantdata:/qdrant/storage
+    ports: ["6333:6333"]
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ${PROJECT_NAME}-ollama
+    volumes:
+      - ollama:/root/.ollama
+    ports: ["11434:11434"]
+    environment:
+      - TZ=${TZ}
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    command: >
+      sh -c "
+        (ollama serve &) &&
+        sleep 2 &&
+        for m in ${OLLAMA_MODELS//,/ }; do
+            echo pulling $m && ollama pull $m;
+        done &&
+        tail -f /dev/null
+      "
+
+  extractor:
+    build: ./services/extractor
+    container_name: ${PROJECT_NAME}-extractor
+    environment:
+      - TZ=${TZ}
+    ports: ["8080:8080"]
+    depends_on:
+      - postgres
+
+  forecast:
+    build: ./services/forecast
+    container_name: ${PROJECT_NAME}-forecast
+    environment:
+      - TZ=${TZ}
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    ports: ["8200:8200"]
+    depends_on:
+      - postgres
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: ${PROJECT_NAME}-n8n
+    environment:
+      - TZ=${TZ}
+      - N8N_HOST=${N8N_HOST}
+      - N8N_PORT=${N8N_PORT}
+      - N8N_PROTOCOL=${N8N_PROTOCOL}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE}
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB}
+      - DB_POSTGRESDB_USER=${POSTGRES_USER}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD}
+      - EXECUTIONS_DATA_SAVE_ON_SUCCESS=none
+      - EXECUTIONS_DATA_SAVE_ON_ERROR=all
+      - EXECUTIONS_MODE=regular
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_PERSONALIZATION_ENABLED=false
+      - OLLAMA_BASE_URL=http://ollama:11434
+    ports: ["5678:5678"]
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./workflows:/workflows
+      - ./prompts:/prompts
+    depends_on:
+      - postgres
+      - qdrant
+      - ollama
+      - extractor
+      - forecast
+
+volumes:
+  pgdata:
+  qdrantdata:
+  ollama:
+  n8n_data:
+```
+
+---
+
+## 4) Database schema
+
+**db/schema.sql**
+
+```sql
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- seen URLs for dedupe
+CREATE TABLE IF NOT EXISTS news_seen (
+  url_hash TEXT PRIMARY KEY,
+  first_seen TIMESTAMPTZ DEFAULT now()
+);
+
+-- raw + normalized article store
+CREATE TABLE IF NOT EXISTS articles (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  url TEXT UNIQUE NOT NULL,
+  title TEXT,
+  author TEXT,
+  source TEXT,
+  section TEXT,
+  language TEXT,
+  published_at TIMESTAMPTZ,
+  paywall BOOLEAN DEFAULT FALSE,
+  raw_html TEXT,
+  text TEXT,
+  fetched_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- bias + sentiment + tags
+CREATE TABLE IF NOT EXISTS analysis (
+  article_id UUID PRIMARY KEY REFERENCES articles(id) ON DELETE CASCADE,
+  subjectivity INT,
+  sensationalism INT,
+  loaded_language INT,
+  bias_lr INT,
+  stance TEXT,
+  evidence_density INT,
+  sentiment TEXT,
+  sentiment_confidence NUMERIC,
+  agenda_signals JSONB,
+  risk_flags JSONB,
+  entities JSONB,
+  tags JSONB,
+  key_quotes JSONB,
+  summary_bullets JSONB
+);
+
+-- user/system feedback for reinforcement
+CREATE TABLE IF NOT EXISTS feedback (
+  id BIGSERIAL PRIMARY KEY,
+  article_id UUID REFERENCES articles(id) ON DELETE CASCADE,
+  clicked BOOLEAN,
+  upvote BOOLEAN,
+  correct_after_days BOOLEAN,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- bandit parameters (e.g., source weights, prompt variant)
+CREATE TABLE IF NOT EXISTS bandit_state (
+  key TEXT PRIMARY KEY,            -- e.g., 'source:reuters' or 'prompt:variantA'
+  count BIGINT DEFAULT 0,
+  success BIGINT DEFAULT 0,
+  params JSONB,
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- digests
+CREATE TABLE IF NOT EXISTS digests (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  date DATE NOT NULL,
+  topic TEXT,
+  content_md TEXT,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+```
+
+**db/seed.sql** (optional initial bandit priors)
+
+```sql
+INSERT INTO bandit_state(key, count, success, params)
+VALUES
+  ('prompt:variantA', 1, 1, '{"temperature":0.1}'),
+  ('prompt:variantB', 1, 1, '{"temperature":0.2}');
+```
+
+---
+
+## 5) Microservices
+
+### A) HTML extractor (FastAPI + trafilatura)
+
+**services/extractor/requirements.txt**
+
+```
+fastapi==0.115.0
+uvicorn==0.30.6
+trafilatura==1.9.0
+```
+
+**services/extractor/Dockerfile**
+
+```dockerfile
+FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY main.py .
+EXPOSE 8080
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+```
+
+**services/extractor/main.py**
+
+```python
+from fastapi import FastAPI, Body
+from pydantic import BaseModel
+import trafilatura
+
+app = FastAPI(title="Extractor")
+
+class ExtractRequest(BaseModel):
+    url: str | None = None
+    html: str | None = None
+
+@app.post("/extract")
+def extract(req: ExtractRequest):
+    if req.html:
+        text = trafilatura.extract(req.html, include_comments=False, include_images=False)
+    elif req.url:
+        downloaded = trafilatura.fetch_url(req.url)
+        text = trafilatura.extract(downloaded, include_comments=False, include_images=False)
+    else:
+        return {"ok": False, "error": "Provide 'url' or 'html'."}
+    return {"ok": True, "text": text or ""}
+```
+
+### B) Forecast + bandit service (FastAPI)
+
+**services/forecast/requirements.txt**
+
+```
+fastapi==0.115.0
+uvicorn==0.30.6
+pydantic==2.9.2
+pandas==2.2.2
+numpy==2.0.2
+psycopg2-binary==2.9.9
+```
+
+*(Keep Prophet optional to simplify; we’ll do a rolling mean forecast for now.)*
+
+**services/forecast/Dockerfile**
+
+```dockerfile
+FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY main.py .
+ENV PORT=8200
+EXPOSE 8200
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8200"]
+```
+
+**services/forecast/main.py**
+
+```python
+import os, random, json, datetime as dt
+import psycopg2
+import pandas as pd
+from fastapi import FastAPI, Body
+from pydantic import BaseModel
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+def pg():
+    return psycopg2.connect(DATABASE_URL)
+
+app = FastAPI(title="Forecast+Bandit")
+
+# ---------- Forecast ----------
+class SeriesPoint(BaseModel):
+    date: str
+    value: float
+
+class ForecastReq(BaseModel):
+    series: list[SeriesPoint]
+    horizon_days: int = 7
+
+@app.post("/forecast")
+def forecast(req: ForecastReq):
+    df = pd.DataFrame([{"ds": p.date, "y": p.value} for p in req.series])
+    df["ds"] = pd.to_datetime(df["ds"])
+    df = df.sort_values("ds")
+    # naive baseline: rolling mean
+    window = min(7, max(3, len(df)//3 or 3))
+    mean_val = float(df["y"].tail(window).mean())
+    today = df["ds"].max()
+    out = []
+    for i in range(1, req.horizon_days+1):
+        out.append({
+            "date": (today + pd.Timedelta(days=i)).date().isoformat(),
+            "point": mean_val
+        })
+    scenarios = [
+        {"name":"base","prob":0.6,"delta":0.0},
+        {"name":"upside","prob":0.2,"delta":+0.1*mean_val},
+        {"name":"downside","prob":0.2,"delta":-0.1*mean_val},
+    ]
+    return {"ok": True, "mean": mean_val, "horizon": out, "scenarios": scenarios}
+
+# ---------- Bandit (Thompson sampling) ----------
+class BanditSelectReq(BaseModel):
+    keys: list[str]
+
+@app.post("/bandit/select")
+def bandit_select(req: BanditSelectReq):
+    # choose key with highest sampled theta ~ Beta(success+1, failures+1)
+    with pg() as conn, conn.cursor() as cur:
+        cur.execute("SELECT key, count, success, coalesce(params,'{}') FROM bandit_state WHERE key = ANY(%s)", (req.keys,))
+        rows = cur.fetchall()
+    if not rows:
+        return {"ok": False, "error": "No bandit keys found"}
+    best_key, best_theta = None, -1
+    for key, count, success, _ in rows:
+        a = int(success) + 1
+        b = int(max(0, count - success)) + 1
+        theta = random.betavariate(a, b)
+        if theta > best_theta:
+            best_theta, best_key = theta, key
+    return {"ok": True, "selected": best_key, "theta": best_theta}
+
+class BanditUpdateReq(BaseModel):
+    key: str
+    reward: float  # 0..1
+
+@app.post("/bandit/update")
+def bandit_update(req: BanditUpdateReq):
+    with pg() as conn, conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO bandit_state(key, count, success, params)
+            VALUES (%s, 1, %s, '{}')
+            ON CONFLICT (key) DO UPDATE
+            SET count = bandit_state.count + 1,
+                success = bandit_state.success + %s,
+                updated_at = now()
+        """, (req.key, 1 if req.reward >= 0.5 else 0, 1 if req.reward >= 0.5 else 0))
+        conn.commit()
+    return {"ok": True}
+```
+
+---
+
+## 6) Prompts
+
+**prompts/bias\_rubric.md**
+
+```
+You are an editorial auditor. Analyze the input article and output STRICT JSON only matching the provided schema.
+Scales 0–100 unless specified.
+- subjectivity: 0 factual – 100 highly subjective
+- sensationalism: 0 none – 100 tabloid-like
+- loaded_language: 0 none – 100 extreme
+- bias_lr: 0 left – 50 center – 100 right (estimate based on language cues only)
+- stance: one of {pro, neutral, anti, unclear} toward the main entity
+- evidence_density: percent of sentences with quotes/data/citations (0–100)
+- agenda_signals: list (e.g., cherry-picking, false balance, ad hominem)
+- risk_flags: list (e.g., unverified claim, miscaptioning)
+Return JSON only, no comments.
+```
+
+**prompts/bias\_rubric.schema.json**
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "subjectivity": { "type": "integer" },
+    "sensationalism": { "type": "integer" },
+    "loaded_language": { "type": "integer" },
+    "bias_lr": { "type": "integer" },
+    "stance": { "type": "string", "enum": ["pro", "neutral", "anti", "unclear"] },
+    "evidence_density": { "type": "integer" },
+    "agenda_signals": { "type": "array", "items": { "type": "string" } },
+    "risk_flags": { "type": "array", "items": { "type": "string" } },
+    "key_quotes": { "type": "array", "items": { "type": "string" } },
+    "summary_bullets": { "type": "array", "items": { "type": "string" } },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "entities": { "type": "array", "items": { "type": "string" } }
+  },
+  "required": ["subjectivity","sensationalism","loaded_language","bias_lr","stance","evidence_density","agenda_signals","risk_flags","key_quotes","summary_bullets","tags","entities"]
+}
+```
+
+**prompts/qa\_system.md**
+
+```
+You are an analyst answering questions using retrieved snippets.
+- Cite each claim with (source, date, title).
+- Prefer diverse outlets.
+- Summarize neutrally; note uncertainty and conflicting reports.
+Return Markdown with a "Sources" section listing citations.
+```
+
+**prompts/digest\_system.md**
+
+```
+You are an OSINT editor. Create a concise daily digest per topic:
+- 3–6 bullets per topic
+- Include stance/bias highlights when relevant
+- End with a short 7-day outlook (from /forecast) and confidence buckets
+Return Markdown.
+```
+
+---
+
+## 7) n8n Workflows (build these in the UI; use code snippets below)
+
+### A) Ingest → Analyze → Index (schedule)
+
+**Nodes & wiring (in order):**
+
+1. **Cron** (every 15 min).
+2. **Read Binary Files (optional)** load `ops/sample_feeds.yaml` or just paste feeds into…
+3. **Function** node `prepareFeeds` → return array of feed URLs (or load from Postgres table).
+4. **Split In Batches** over feed list.
+5. **RSS Read** node (URL from item).
+6. **Item Lists** (flatten items).
+7. **Function** `normalize`:
+
+   * Build canonical URL; strip tracking params.
+   * Compute `url_hash = sha256(url)`.
+8. **Postgres** `checkSeen` (Query): `SELECT 1 FROM news_seen WHERE url_hash={{$json.url_hash}}`
+9. **IF** `not seen` → proceed; else drop.
+10. **Postgres** `markSeen` (Insert).
+11. **HTTP Request** `fetchHTML` (GET {{\$json.url}}) with fallback to…
+12. **HTTP Request** `extractor` (POST [http://extractor:8080/extract](http://extractor:8080/extract)) body `{ "html": "{{$json.body}}", "url": "{{$json.url}}" }` → returns clean `text`.
+13. **IF** `text length < X` → **Puppeteer** (community node) to render → send rendered HTML to extractor again. (Install community node from n8n Hub. If you skip Puppeteer, keep HTTP+extractor only.)
+14. **Function** `upsertArticle` → insert into `articles` with url/title/source/published\_at/raw\_html/text.
+15. **Basic LLM Chain** with **Ollama Model** (e.g., `llama3.1:8b`):
+
+    * System: contents of `prompts/bias_rubric.md`
+    * User: include article metadata + text (truncate to \~6–8k tokens).
+    * Temperature: 0.1, JSON output.
+16. **Sentiment Analysis** node (or a second LLM Chain with strict output).
+17. **Function** `storeAnalysis` → insert into `analysis` with parsed JSON plus sentiment.
+18. **Text Splitter** (Recursive, \~1,200 chars, 10% overlap).
+19. **Embeddings (Ollama)** model `nomic-embed-text`.
+20. **Qdrant: Insert** collection `intel_chunks` with payload metadata:
+
+    * `article_id`, `url`, `title`, `source`, `published_at`, `language`, `bias_lr`, `stance`, `tags`.
+
+> **Notes**
+>
+> * Make `source` reputation and paywall flags columns in `articles`; populate via simple lookups in `normalize`.
+> * Add error branch → **Postgres** dead-letter table (create if you want) recording `url`, `error`, `stage`.
+
+**Example Function code snippets (n8n “Function” node):**
+
+`normalize`
+
+```js
+const crypto = require('crypto');
+return items.map(i => {
+  const it = i.json;
+  const url = it.link || it.url;
+  const u = new URL(url);
+  u.searchParams.delete('utm_source'); u.searchParams.delete('utm_medium');
+  const canon = u.toString();
+  const url_hash = crypto.createHash('sha256').update(canon).digest('hex');
+  return { json: { ...it, url: canon, url_hash, source: u.hostname } };
+});
+```
+
+`upsertArticle`
+
+```js
+// assume previous nodes set json.text and we still have title/published
+// We pass values forward for Postgres Insert (or use Postgres node directly)
+return items.map(i => {
+  const j = i.json;
+  return { json: {
+    url: j.url,
+    title: j.title || null,
+    author: j.author || null,
+    source: j.source || null,
+    section: j.category || null,
+    language: j.language || null,
+    published_at: j.isoDate || j.pubDate || null,
+    raw_html: j.body || null,
+    text: j.text || null
+  }};
+});
+```
+
+**Postgres insert (articles)**
+
+```sql
+INSERT INTO articles(url, title, author, source, section, language, published_at, raw_html, text)
+VALUES(:url, :title, :author, :source, :section, :language, :published_at, :raw_html, :text)
+ON CONFLICT (url) DO UPDATE
+SET title=EXCLUDED.title, author=EXCLUDED.author, source=EXCLUDED.source,
+    section=EXCLUDED.section, language=EXCLUDED.language, published_at=EXCLUDED.published_at,
+    raw_html=EXCLUDED.raw_html, text=EXCLUDED.text, fetched_at=now()
+RETURNING id;
+```
+
+**Postgres insert (analysis)**
+
+```sql
+INSERT INTO analysis(
+  article_id, subjectivity, sensationalism, loaded_language,
+  bias_lr, stance, evidence_density, sentiment, sentiment_confidence,
+  agenda_signals, risk_flags, entities, tags, key_quotes, summary_bullets
+) VALUES(
+  :article_id, :subjectivity, :sensationalism, :loaded_language,
+  :bias_lr, :stance, :evidence_density, :sentiment, :sentiment_confidence,
+  :agenda_signals::jsonb, :risk_flags::jsonb, :entities::jsonb,
+  :tags::jsonb, :key_quotes::jsonb, :summary_bullets::jsonb
+)
+ON CONFLICT (article_id) DO NOTHING;
+```
+
+---
+
+### B) RAG QA (on-demand via Webhook)
+
+**Nodes:**
+
+1. **Webhook** (POST `/ask`), body: `{ "question": "...", "filters": { "topic":"", "date_from":"", "date_to":"", "bias_range":[0,60] }}`
+2. **Function** `buildQuery` → construct vector filter payload from metadata fields.
+3. **Vector Store Retriever (Qdrant)**:
+
+   * Collection: `intel_chunks`
+   * Top-K: 8–12
+   * Optional filter on `source`, `language`, `date`, `bias_lr`.
+4. **Question & Answer Chain (LLM)** with **Ollama**:
+
+   * System: `prompts/qa_system.md`
+   * User: `question` + injected retrieved chunks (trim to fit).
+5. **Respond to Webhook**: return Markdown answer + a `sources` array (URL, title, date).
+
+---
+
+### C) Daily Digest + Forecast + Reinforcement (schedule)
+
+**Nodes:**
+
+1. **Cron** (daily 07:30).
+2. **Postgres** `getTopics` (or keep a YAML list): topics/regions/entities to cover.
+3. **Loop** over topics:
+
+   * **Qdrant Search**: last 24–72h, top-K 30.
+   * Aggregate counts & bias distribution per topic.
+   * **HTTP Request** `forecast` (POST [http://forecast:8200/forecast](http://forecast:8200/forecast)) with series = last N days’ article counts for that topic.
+   * **Basic LLM Chain** with system `prompts/digest_system.md`, user = topic metrics + short list of top items + forecast JSON → returns Markdown.
+4. **Postgres** `saveDigest` into `digests`.
+5. **Bandit feedback hook**:
+
+   * For each topic’s digest, compute **implicit reward** (previous day’s clicks/upvotes if you have a downstream channel) and call **HTTP Request** `bandit/update` (POST [http://forecast:8200/bandit/update](http://forecast:8200/bandit/update)) with the key you used (e.g., `prompt:variantA`) and reward in `[0,1]`.
+   * Before generating digests, call **bandit/select** with keys `prompt:variantA|B|C` to pick which prompt variant to use today.
+
+---
+
+## 8) Sample feeds
+
+**ops/sample\_feeds.yaml**
+
+```yaml
+feeds:
+  - https://www.reuters.com/world/rss
+  - https://feeds.bbci.co.uk/news/world/rss.xml
+  - https://www.aljazeera.com/xml/rss/all.xml
+  - https://www.ft.com/world?format=rss
+  - https://apnews.com/hub/ap-top-news?utm_source=ap_rss
+```
+
+---
+
+## 9) End-to-end instructions (tell Cursor to execute)
+
+1. **Make repo & files**
+
+* Create the directory tree above and add all file contents.
+* Copy `.env.example` → `.env` and (manually) set `N8N_ENCRYPTION_KEY` to a long random string.
+
+2. **Bring up stack**
+
+```bash
+docker compose --env-file ./.env up -d --build
+```
+
+3. **Open n8n** at [http://localhost:5678](http://localhost:5678) and create:
+
+* **Credential** for Postgres (host `postgres`, db `${POSTGRES_DB}`, user `${POSTGRES_USER}`).
+* **HTTP base creds** for:
+
+  * Extractor at `http://extractor:8080`
+  * Forecast/Bandit at `http://forecast:8200`
+* **Ollama Model** pointing to `http://ollama:11434` with models:
+
+  * Text: `llama3.1:8b` (or `qwen2.5:7b/14b` if you prefer)
+  * Embeddings: `nomic-embed-text:latest`
+
+4. **Install Puppeteer community node** (if you want JS rendering). If not, skip and rely on HTTP + extractor.
+
+5. **Build workflows**
+
+* Create the three workflows (Ingest, RAG QA, Digest+Forecast) using the node lists above.
+* For each **Function**/**Code** node, paste the provided snippets.
+* For **LLM Chain** nodes, paste prompts from `/prompts`.
+
+6. **Create Qdrant collection**
+
+* In n8n, first **Qdrant: Insert** run will auto-create; or create manually with distance `cosine`, vector size according to your embedding.
+
+7. **Test**
+
+* Trigger **Ingest** manually. Confirm:
+
+  * `articles` and `analysis` rows appear.
+  * Qdrant points inserted with metadata.
+* Trigger **RAG QA** via webhook with a question. Verify answer + citations.
+* Run **Digest+Forecast** (or let cron fire). Check `digests` table and Markdown quality.
+
+8. **Feedback loop**
+
+* Simulate a reward: call `POST http://localhost:8200/bandit/update` with `{"key":"prompt:variantA","reward":1}`.
+* Next day’s digest should fetch selection with `bandit/select` and may alternate prompt variant.
+
+---
+
+## 10) Hardening & quality
+
+* **Rate limits / polite crawling:** respect robots.txt and site TOS; keep concurrency low in HTTP/Puppeteer nodes.
+* **Deduplication:** you already hash URLs; also hash article text (minhash) if you want.
+* **LLM timeouts:** set 60–90s timeouts; short context windows for bias JSON.
+* **Chunking:** 900–1,400 chars; store chunk `id` + `article_id` in Qdrant metadata.
+* **RAG guardrails:** require top-K ≥ 3; if fewer, respond “insufficient evidence.”
+* **Observability:** set `N8N_LOG_LEVEL=debug` while developing; add a Postgres `errors` table and wire error branches.
+
+---
+
+## 11) Cursor prompts you can paste
+
+* **“Create the repository structure and all files with the exact contents I provide.”**
+* **“Generate docker-compose.yml and .env.example as specified and check for YAML/ENV syntax issues.”**
+* **“Write the FastAPI services from the spec, add Dockerfiles/requirements, and ensure they bind to 0.0.0.0.”**
+* **“Generate SQL schema and a seed file; ensure Postgres starts with them.”**
+* **“Add README with boot instructions, health checks, and troubleshooting tips.”**
+
+---
+
+## 12) README starter (have Cursor write it)
+
+Include:
+
+* Prereqs (Docker, ports 5678/6333/11434/8080/8200 free)
+* Startup (`docker compose up -d --build`)
+* n8n setup steps
+* How to import workflows / create credentials
+* Testing checklist (as in §9)
+* Extension ideas:
+
+  * Add Slack/Mail nodes for digests
+  * Add source reputation weights in bandit `params`
+  * Switch forecast to Prophet (add dependency) or an LSTM service
+  * Multilingual embeddings (bge-m3, e5-multilingual) via Ollama/HF
+
+---
+
+## 13) What to tweak for your needs
+
+* **Feeds**: edit `ops/sample_feeds.yaml` or make a `feeds` table and read it in `prepareFeeds`.
+* **Bias thresholds**: e.g., drop sensationalism > 70 or evidence\_density < 25 before indexing.
+* **Topics**: static YAML vs Postgres table.
+* **Forecast horizon**: 7 vs 30 days.
+* **Reward:** define α/β/γ behind the scenes (open/click/upvote/correctness) and normalize to 0..1 before `bandit/update`.
+
+---
+
+That’s everything Cursor needs to spin up a **professional, local-first news intelligence pipeline**: containers, services, prompts, SQL, and concrete n8n node sequences. If you’d like, I can also produce **ready-to-import n8n JSON exports** for the three workflows tailored to your exact feed list and metadata fields—just say “export the workflows” and I’ll include them with placeholder credentials and IDs.
